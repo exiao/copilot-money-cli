@@ -1,0 +1,18 @@
+---
+source: tests/cli_snapshots.rs
+expression: "run(&[\"--yes\", \"--output\", \"json\", \"tags\", \"create\", \"New Tag\"])"
+---
+[
+  {
+    "key": "id",
+    "value": "tag_new"
+  },
+  {
+    "key": "name",
+    "value": "New Tag"
+  },
+  {
+    "key": "color_name",
+    "value": "YELLOW2"
+  }
+]

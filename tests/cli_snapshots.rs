@@ -281,3 +281,36 @@ fn budgets_month_table_snapshot() {
 fn budgets_month_json_snapshot() {
     insta::assert_snapshot!(run(&["--output", "json", "budgets", "month"]));
 }
+
+// -- Tags snapshots -----------------------------------------------------------
+
+#[test]
+fn tags_list_table_snapshot() {
+    insta::assert_snapshot!(run(&["tags", "list"]));
+}
+
+#[test]
+fn tags_list_json_snapshot() {
+    insta::assert_snapshot!(run(&["--output", "json", "tags", "list"]));
+}
+
+#[test]
+fn tags_create_json_snapshot() {
+    insta::assert_snapshot!(run(&[
+        "--yes", "--output", "json", "tags", "create", "New Tag"
+    ]));
+}
+
+#[test]
+fn tags_delete_json_snapshot() {
+    insta::assert_snapshot!(run(&[
+        "--yes", "--output", "json", "tags", "delete", "tag_1"
+    ]));
+}
+
+// -- Version snapshot ---------------------------------------------------------
+
+#[test]
+fn version_snapshot() {
+    insta::assert_snapshot!(run(&["version"]));
+}

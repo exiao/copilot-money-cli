@@ -1540,4 +1540,134 @@ mod helper_tests {
         );
         assert_eq!(build_transactions_filter(false, false), None);
     }
+
+    // -- value_to_string for all Value variants --------------------------------
+
+    #[test]
+    fn value_to_string_none() {
+        assert_eq!(value_to_string(None), "");
+    }
+
+    #[test]
+    fn value_to_string_string() {
+        assert_eq!(value_to_string(Some(serde_json::json!("hello"))), "hello");
+    }
+
+    #[test]
+    fn value_to_string_number_int() {
+        assert_eq!(value_to_string(Some(serde_json::json!(42))), "42");
+    }
+
+    #[test]
+    fn value_to_string_number_float() {
+        assert_eq!(value_to_string(Some(serde_json::json!(3.14))), "3.14");
+    }
+
+    #[test]
+    fn value_to_string_bool_true() {
+        assert_eq!(value_to_string(Some(serde_json::json!(true))), "true");
+    }
+
+    #[test]
+    fn value_to_string_bool_false() {
+        assert_eq!(value_to_string(Some(serde_json::json!(false))), "false");
+    }
+
+    #[test]
+    fn value_to_string_null() {
+        assert_eq!(value_to_string(Some(serde_json::Value::Null)), "");
+    }
+
+    #[test]
+    fn value_to_string_array() {
+        let v = serde_json::json!([1, 2, 3]);
+        let s = value_to_string(Some(v));
+        assert!(s.contains('1'));
+        assert!(s.contains('2'));
+        assert!(s.contains('3'));
+    }
+
+    #[test]
+    fn value_to_string_object() {
+        let v = serde_json::json!({"key": "val"});
+        let s = value_to_string(Some(v));
+        assert!(s.contains("key"));
+        assert!(s.contains("val"));
+    }
+
+    // -- value_to_money_string edge cases --------------------------------------
+
+    #[test]
+    fn money_string_null_value() {
+        assert_eq!(value_to_money_string(Some(serde_json::Value::Null)), "");
+    }
+
+    #[test]
+    fn money_string_positive_integer() {
+        assert_eq!(
+            value_to_money_string(Some(serde_json::json!(100))),
+            "$100.00"
+        );
+    }
+
+    #[test]
+    fn money_string_negative_string() {
+        assert_eq!(
+            value_to_money_string(Some(serde_json::json!("-1234.5"))),
+            "-$1234.50"
+        );
+    }
+
+    #[test]
+    fn money_string_empty_string() {
+        assert_eq!(value_to_money_string(Some(serde_json::json!(""))), "");
+    }
+
+    #[test]
+    fn money_string_zero_float() {
+        assert_eq!(value_to_money_string(Some(serde_json::json!(0.0))), "$0.00");
+    }
+
+    // -- flatten_categories_for_lookup with nested children ---------------------
+
+    #[test]
+    fn flatten_categories_for_lookup_with_children() {
+        use crate::client::Category;
+        use crate::types::CategoryId;
+
+        let categories = vec![Category {
+            id: CategoryId::from("cat_parent"),
+            name: Some("Parent".to_string()),
+            is_rollover_disabled: None,
+            can_be_deleted: None,
+            is_excluded: None,
+            template_id: None,
+            color_name: None,
+            icon: None,
+            child_categories: Some(vec![Category {
+                id: CategoryId::from("cat_child"),
+                name: Some("Child".to_string()),
+                is_rollover_disabled: None,
+                can_be_deleted: None,
+                is_excluded: None,
+                template_id: None,
+                color_name: None,
+                icon: None,
+                child_categories: None,
+            }]),
+        }];
+
+        let flat = flatten_categories_for_lookup(&categories);
+        assert_eq!(flat.len(), 2);
+        assert_eq!(flat[0].0.as_str(), "cat_parent");
+        assert_eq!(flat[0].1, "Parent");
+        assert_eq!(flat[1].0.as_str(), "cat_child");
+        assert_eq!(flat[1].1, "Child");
+    }
+
+    #[test]
+    fn flatten_categories_for_lookup_empty() {
+        let flat = flatten_categories_for_lookup(&[]);
+        assert!(flat.is_empty());
+    }
 }
