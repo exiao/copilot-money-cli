@@ -116,6 +116,21 @@ impl CopilotClient {
         Ok(out)
     }
 
+    pub fn list_accounts(&self) -> anyhow::Result<Vec<Account>> {
+        let data = self.graphql("Accounts", ops::ACCOUNTS, json!({ "filter": null }))?;
+        let items = data
+            .pointer("/data/accounts")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("unexpected Accounts response shape"))?;
+
+        let mut out = Vec::new();
+        for item in items {
+            let a: Account = serde_json::from_value(item.clone())?;
+            out.push(a);
+        }
+        Ok(out)
+    }
+
     pub fn list_recurrings(&self) -> anyhow::Result<Vec<Recurring>> {
         let data = self.graphql("Recurrings", ops::RECURRINGS, json!({ "filter": null }))?;
         let items = data
@@ -638,4 +653,22 @@ pub struct Recurring {
 pub struct BudgetMonth {
     pub month: String,
     pub amount: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Account {
+    pub id: AccountId,
+    pub name: Option<String>,
+    #[serde(rename = "type")]
+    pub account_type: Option<String>,
+    #[serde(rename = "subType")]
+    pub sub_type: Option<String>,
+    pub mask: Option<String>,
+    pub balance: Option<Value>,
+    #[serde(rename = "institutionId")]
+    pub institution_id: Option<String>,
+    #[serde(rename = "isUserHidden")]
+    pub is_user_hidden: Option<bool>,
+    #[serde(rename = "isUserClosed")]
+    pub is_user_closed: Option<bool>,
 }

@@ -84,6 +84,7 @@ pub struct Cli {
 }
 
 #[derive(Debug, Clone, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     Auth {
         #[command(subcommand)]
@@ -109,7 +110,23 @@ pub enum Command {
         #[command(subcommand)]
         cmd: BudgetsCmd,
     },
+    Accounts {
+        #[command(subcommand)]
+        cmd: AccountsCmd,
+    },
     Version,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum AccountsCmd {
+    List(AccountsListArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct AccountsListArgs {
+    /// Include hidden accounts.
+    #[arg(long, default_value_t = false)]
+    pub include_hidden: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -213,6 +230,7 @@ pub enum TransactionField {
     Tags,
     Type,
     Id,
+    Account,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -256,9 +274,33 @@ pub struct TransactionsListArgs {
     #[arg(long)]
     pub date: Option<String>,
 
+    /// Include only transactions on or after this date (YYYY-MM-DD).
+    #[arg(long)]
+    pub date_after: Option<String>,
+
+    /// Include only transactions on or before this date (YYYY-MM-DD).
+    #[arg(long)]
+    pub date_before: Option<String>,
+
     /// Filter by merchant/name substring (case-insensitive).
     #[arg(long)]
     pub name_contains: Option<String>,
+
+    /// Include only transactions from these account IDs (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub account_id: Vec<String>,
+
+    /// Exclude transactions from these account IDs (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub exclude_account_id: Vec<String>,
+
+    /// Include only transactions from accounts matching this name substring (repeatable, case-insensitive).
+    #[arg(long, value_name = "NAME")]
+    pub account: Vec<String>,
+
+    /// Exclude transactions from accounts matching this name substring (repeatable, case-insensitive).
+    #[arg(long, value_name = "NAME")]
+    pub exclude_account: Vec<String>,
 
     /// Sort transactions server-side (best-effort).
     #[arg(long, value_enum)]
@@ -320,6 +362,30 @@ pub struct TransactionsSearchArgs {
     /// Filter to a specific date (supports YYYY-MM-DD and MM-DD-YYYY).
     #[arg(long)]
     pub date: Option<String>,
+
+    /// Include only transactions on or after this date (YYYY-MM-DD).
+    #[arg(long)]
+    pub date_after: Option<String>,
+
+    /// Include only transactions on or before this date (YYYY-MM-DD).
+    #[arg(long)]
+    pub date_before: Option<String>,
+
+    /// Include only transactions from these account IDs (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub account_id: Vec<String>,
+
+    /// Exclude transactions from these account IDs (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub exclude_account_id: Vec<String>,
+
+    /// Include only transactions from accounts matching this name substring (repeatable, case-insensitive).
+    #[arg(long, value_name = "NAME")]
+    pub account: Vec<String>,
+
+    /// Exclude transactions from accounts matching this name substring (repeatable, case-insensitive).
+    #[arg(long, value_name = "NAME")]
+    pub exclude_account: Vec<String>,
 
     /// Sort transactions server-side (best-effort).
     #[arg(long, value_enum)]
@@ -598,6 +664,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Recurrings { cmd } => recurrings::run_recurrings(&cli, &client, cmd.clone()),
         Command::Tags { cmd } => tags::run_tags(&cli, &client, cmd.clone()),
         Command::Budgets { cmd } => budgets::run_budgets(&cli, &client, cmd.clone()),
+        Command::Accounts { cmd } => run_accounts(&cli, &client, cmd.clone()),
         Command::Version => unreachable!(),
     }
 }
@@ -772,6 +839,98 @@ fn confirm_write(cli: &Cli, action: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Resolve account name substrings to account IDs.
+/// Returns a list of account IDs whose names contain any of the given substrings (case-insensitive).
+fn resolve_account_names_to_ids(
+    client: &CopilotClient,
+    names: &[String],
+) -> anyhow::Result<Vec<String>> {
+    if names.is_empty() {
+        return Ok(vec![]);
+    }
+    let accounts = client.list_accounts()?;
+    let mut ids = Vec::new();
+    for name_substr in names {
+        let lower = name_substr.to_lowercase();
+        let mut found = false;
+        for acc in &accounts {
+            let acc_name = acc.name.as_deref().unwrap_or("").to_lowercase();
+            if acc_name.contains(&lower) {
+                ids.push(acc.id.as_str().to_string());
+                found = true;
+            }
+        }
+        if !found {
+            anyhow::bail!(
+                "no account found matching {:?} (available: {})",
+                name_substr,
+                accounts
+                    .iter()
+                    .filter_map(|a| a.name.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    Ok(ids)
+}
+
+fn run_accounts(cli: &Cli, client: &CopilotClient, cmd: AccountsCmd) -> anyhow::Result<()> {
+    match cmd {
+        AccountsCmd::List(args) => {
+            let mut accounts = client.list_accounts()?;
+            if !args.include_hidden {
+                accounts.retain(|a| !a.is_user_hidden.unwrap_or(false));
+            }
+
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&accounts)?);
+                }
+                OutputFormat::Table => {
+                    let mut table = Table::new();
+                    table
+                        .load_preset(UTF8_FULL)
+                        .apply_modifier(UTF8_ROUND_CORNERS)
+                        .set_content_arrangement(ContentArrangement::DynamicFullWidth);
+                    if let Some(w) = terminal_width() {
+                        table.set_width(w);
+                    }
+                    table.set_header(vec![
+                        header_cell(cli, "Name"),
+                        header_cell(cli, "Type"),
+                        header_cell(cli, "Mask"),
+                        header_cell(cli, "Balance"),
+                        header_cell(cli, "ID"),
+                    ]);
+                    for acc in &accounts {
+                        let balance = acc
+                            .balance
+                            .as_ref()
+                            .map(|v| {
+                                if let Some(n) = v.as_f64() {
+                                    format!("${:.2}", n)
+                                } else {
+                                    v.to_string()
+                                }
+                            })
+                            .unwrap_or_default();
+                        table.add_row(vec![
+                            acc.name.as_deref().unwrap_or("").to_string(),
+                            acc.account_type.as_deref().unwrap_or("").to_string(),
+                            acc.mask.as_deref().unwrap_or("").to_string(),
+                            balance,
+                            shorten_id_for_table(acc.id.as_str()),
+                        ]);
+                    }
+                    println!("{table}");
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> anyhow::Result<()> {
     match cmd {
         TransactionsCmd::List(args) => {
@@ -779,6 +938,13 @@ fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> 
                 resolve_category_id(client, args.category_id.as_ref(), args.category.as_deref())?;
             let filter = build_transactions_filter(args.reviewed, args.unreviewed);
             let sort = sort_to_graphql(args.sort);
+
+            // Resolve account name filters to IDs
+            let mut include_ids = args.account_id.clone();
+            include_ids.extend(resolve_account_names_to_ids(client, &args.account)?);
+            let mut exclude_ids = args.exclude_account_id.clone();
+            exclude_ids.extend(resolve_account_names_to_ids(client, &args.exclude_account)?);
+
             let (items, page_info) = fetch_transactions_with_filter_sort(
                 client,
                 args.limit,
@@ -796,6 +962,10 @@ fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> 
                 &args.tag,
                 args.name_contains.as_deref(),
                 args.date.as_deref(),
+                args.date_after.as_deref(),
+                args.date_before.as_deref(),
+                &include_ids,
+                &exclude_ids,
             );
             render_transactions_output(
                 cli,
@@ -811,6 +981,13 @@ fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> 
                 resolve_category_id(client, args.category_id.as_ref(), args.category.as_deref())?;
             let filter = build_transactions_filter(args.reviewed, args.unreviewed);
             let sort = sort_to_graphql(args.sort);
+
+            // Resolve account name filters to IDs
+            let mut include_ids = args.account_id.clone();
+            include_ids.extend(resolve_account_names_to_ids(client, &args.account)?);
+            let mut exclude_ids = args.exclude_account_id.clone();
+            exclude_ids.extend(resolve_account_names_to_ids(client, &args.exclude_account)?);
+
             let (items, page_info) = fetch_transactions_with_filter_sort(
                 client,
                 args.limit,
@@ -828,6 +1005,10 @@ fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> 
                 &args.tag,
                 Some(&args.query),
                 args.date.as_deref(),
+                args.date_after.as_deref(),
+                args.date_before.as_deref(),
+                &include_ids,
+                &exclude_ids,
             );
             render_transactions_output(
                 cli,
@@ -1220,7 +1401,7 @@ fn render_transactions_updated(cli: &Cli, items: Vec<Transaction>) -> anyhow::Re
             println!("{s}");
             Ok(())
         }
-        OutputFormat::Table => render_transactions_table(cli, &items, DEFAULT_FIELDS, None),
+        OutputFormat::Table => render_transactions_table(cli, &items, DEFAULT_FIELDS, None, None),
     }
 }
 
@@ -1277,6 +1458,7 @@ fn fetch_transactions_with_filter_sort(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn filter_transactions(
     items: Vec<Transaction>,
     reviewed: bool,
@@ -1285,9 +1467,17 @@ fn filter_transactions(
     tags: &[String],
     query: Option<&str>,
     date: Option<&str>,
+    date_after: Option<&str>,
+    date_before: Option<&str>,
+    include_account_ids: &[String],
+    exclude_account_ids: &[String],
 ) -> Vec<Transaction> {
     let q = query.map(|s| s.to_lowercase());
     let want_tags = tags.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>();
+    let date_after_norm =
+        date_after.and_then(|d| normalize_date(d).or_else(|| Some(d.to_string())));
+    let date_before_norm =
+        date_before.and_then(|d| normalize_date(d).or_else(|| Some(d.to_string())));
 
     items
         .into_iter()
@@ -1315,6 +1505,28 @@ fn filter_transactions(
                     return false;
                 }
             }
+            // Date range filters
+            let txn_date = t.date.as_deref().unwrap_or("");
+            if let Some(ref after) = date_after_norm
+                && txn_date < after.as_str()
+            {
+                return false;
+            }
+            if let Some(ref before) = date_before_norm
+                && txn_date > before.as_str()
+            {
+                return false;
+            }
+            // Account filters
+            let txn_account = t.account_id.as_ref().map(|a| a.as_str()).unwrap_or("");
+            if !include_account_ids.is_empty()
+                && !include_account_ids.iter().any(|id| id == txn_account)
+            {
+                return false;
+            }
+            if exclude_account_ids.iter().any(|id| id == txn_account) {
+                return false;
+            }
             if want_tags.is_empty() {
                 return true;
             }
@@ -1338,6 +1550,7 @@ fn render_transactions_table(
     items: &[Transaction],
     fields: &[TransactionField],
     categories: Option<&HashMap<CategoryId, String>>,
+    accounts: Option<&HashMap<String, String>>,
 ) -> anyhow::Result<()> {
     use comfy_table::CellAlignment;
 
@@ -1362,6 +1575,7 @@ fn render_transactions_table(
             TransactionField::Tags => header_cell(cli, "tags"),
             TransactionField::Type => header_cell(cli, "type"),
             TransactionField::Id => header_cell(cli, "id"),
+            TransactionField::Account => header_cell(cli, "account"),
         })
         .collect::<Vec<_>>();
     table.set_header(ComfyRow::from(header));
@@ -1424,6 +1638,16 @@ fn render_transactions_table(
                         .unwrap_or_default(),
                 )),
                 TransactionField::Id => cells.push(Cell::new(shorten_id_for_table(t.id.as_str()))),
+                TransactionField::Account => {
+                    let name = t
+                        .account_id
+                        .as_ref()
+                        .and_then(|id| accounts.and_then(|m| m.get(id.as_str())))
+                        .map(|s| s.as_str())
+                        .or_else(|| t.account_id.as_ref().map(|id| id.as_str()))
+                        .unwrap_or("");
+                    cells.push(Cell::new(name));
+                }
             }
         }
         table.add_row(ComfyRow::from(cells));
@@ -1457,7 +1681,17 @@ fn render_transactions_output(
             } else {
                 None
             };
-            render_transactions_table(cli, &items, fields, cats.as_ref())?;
+            let accts = if fields.contains(&TransactionField::Account) {
+                let accounts = client.list_accounts()?;
+                let map: HashMap<String, String> = accounts
+                    .into_iter()
+                    .map(|a| (a.id.as_str().to_string(), a.name.unwrap_or_default()))
+                    .collect();
+                Some(map)
+            } else {
+                None
+            };
+            render_transactions_table(cli, &items, fields, cats.as_ref(), accts.as_ref())?;
             if include_page_info {
                 render_output(
                     cli,
