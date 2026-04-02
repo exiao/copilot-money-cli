@@ -70,8 +70,14 @@ impl CopilotClient {
         let mut transactions = Vec::new();
         for edge in edges {
             if let Some(node) = edge.pointer("/node") {
-                let t: Transaction = serde_json::from_value(node.clone())?;
-                transactions.push(t);
+                // Skip nodes with null id (server-side bug in Copilot API).
+                if node.get("id").map_or(true, |v| v.is_null()) {
+                    continue;
+                }
+                match serde_json::from_value::<Transaction>(node.clone()) {
+                    Ok(t) => transactions.push(t),
+                    Err(e) => eprintln!("warning: skipping malformed transaction: {e}"),
+                }
             }
         }
 
@@ -440,7 +446,13 @@ impl CopilotClient {
                     }
 
                     if let Some(msg) = format_graphql_error(&body) {
-                        anyhow::bail!("{msg}");
+                        // If we have partial data alongside the error, return the body
+                        // so callers can process what they got (e.g. null-ID transactions).
+                        if body.get("data").and_then(|d| d.as_object()).is_some() {
+                            eprintln!("warning: graphql partial error (skipping bad records): {msg}");
+                        } else {
+                            anyhow::bail!("{msg}");
+                        }
                     }
 
                     if !status.is_success() {

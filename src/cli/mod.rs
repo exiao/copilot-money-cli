@@ -1314,7 +1314,13 @@ fn resolve_transactions_by_ids(
     let max_pages = 200usize; // safety guard; use `transactions list --all` if you need more context.
 
     for _ in 0..max_pages {
-        let page = client.list_transactions_page(200, cursor.clone(), None, None)?;
+        let page = match client.list_transactions_page(200, cursor.clone(), None, None) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("warning: stopping lookup early due to server error: {e}");
+                break;
+            }
+        };
         let has_next = page.page_info.has_next_page.unwrap_or(false);
         cursor = page.page_info.end_cursor.clone();
         scanned += page.transactions.len();
@@ -1428,12 +1434,21 @@ fn fetch_transactions_with_filter_sort(
     let mut last_page_info: Option<PageInfo> = None;
 
     for _ in 0..max_pages {
-        let page = client.list_transactions_page(
+        let page = match client.list_transactions_page(
             page_size,
             cursor.clone(),
             filter.clone(),
             sort.clone(),
-        )?;
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!(
+                    "warning: stopping pagination early due to server error: {e} (fetched {} transactions so far)",
+                    out.len()
+                );
+                break;
+            }
+        };
         cursor = page.page_info.end_cursor.clone();
         last_page_info = Some(page.page_info);
         out.extend(page.transactions);
