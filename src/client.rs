@@ -70,8 +70,14 @@ impl CopilotClient {
         let mut transactions = Vec::new();
         for edge in edges {
             if let Some(node) = edge.pointer("/node") {
-                let t: Transaction = serde_json::from_value(node.clone())?;
-                transactions.push(t);
+                // Skip nodes with null id (server-side bug in Copilot API).
+                if node.get("id").map_or(true, |v| v.is_null()) {
+                    continue;
+                }
+                match serde_json::from_value::<Transaction>(node.clone()) {
+                    Ok(t) => transactions.push(t),
+                    Err(e) => eprintln!("warning: skipping malformed transaction: {e}"),
+                }
             }
         }
 
@@ -112,6 +118,21 @@ impl CopilotClient {
         for item in items {
             let c: Category = serde_json::from_value(item.clone())?;
             out.push(c);
+        }
+        Ok(out)
+    }
+
+    pub fn list_accounts(&self) -> anyhow::Result<Vec<Account>> {
+        let data = self.graphql("Accounts", ops::ACCOUNTS, json!({ "filter": null }))?;
+        let items = data
+            .pointer("/data/accounts")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("unexpected Accounts response shape"))?;
+
+        let mut out = Vec::new();
+        for item in items {
+            let a: Account = serde_json::from_value(item.clone())?;
+            out.push(a);
         }
         Ok(out)
     }
@@ -425,7 +446,13 @@ impl CopilotClient {
                     }
 
                     if let Some(msg) = format_graphql_error(&body) {
-                        anyhow::bail!("{msg}");
+                        // If we have partial data alongside the error, return the body
+                        // so callers can process what they got (e.g. null-ID transactions).
+                        if body.get("data").and_then(|d| d.as_object()).is_some() {
+                            eprintln!("warning: graphql partial error (skipping bad records): {msg}");
+                        } else {
+                            anyhow::bail!("{msg}");
+                        }
                     }
 
                     if !status.is_success() {
@@ -638,4 +665,22 @@ pub struct Recurring {
 pub struct BudgetMonth {
     pub month: String,
     pub amount: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Account {
+    pub id: AccountId,
+    pub name: Option<String>,
+    #[serde(rename = "type")]
+    pub account_type: Option<String>,
+    #[serde(rename = "subType")]
+    pub sub_type: Option<String>,
+    pub mask: Option<String>,
+    pub balance: Option<Value>,
+    #[serde(rename = "institutionId")]
+    pub institution_id: Option<String>,
+    #[serde(rename = "isUserHidden")]
+    pub is_user_hidden: Option<bool>,
+    #[serde(rename = "isUserClosed")]
+    pub is_user_closed: Option<bool>,
 }
