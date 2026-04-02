@@ -1,0 +1,11 @@
+---
+source: tests/cli_snapshots.rs
+expression: "run(&[\"tags\", \"list\"])"
+---
+╭──────────────┬──────────┬────────────╮
+│ id           ┆ name     ┆ color_name │
+╞══════════════╪══════════╪════════════╡
+│ tag_shopping ┆ Shopping ┆ BLUE1      │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ tag_transfer ┆ Transfer ┆ GRAY1      │
+╰──────────────┴──────────┴────────────╯

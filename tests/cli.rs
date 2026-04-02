@@ -166,3 +166,97 @@ fn tags_delete_requires_yes_or_dry_run() {
         .stdout(predicate::str::contains("\"deleted\""))
         .stdout(predicate::str::contains("\"true\""));
 }
+
+// -- Error cases: conflicting flags -------------------------------------------
+
+#[test]
+fn conflicting_reviewed_and_unreviewed_flags() {
+    let tmp_home = tempfile::tempdir().unwrap();
+    cmd_with_fixtures(&tmp_home)
+        .args(["transactions", "list", "--reviewed", "--unreviewed"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn conflicting_all_and_pages_flags() {
+    let tmp_home = tempfile::tempdir().unwrap();
+    cmd_with_fixtures(&tmp_home)
+        .args(["transactions", "list", "--all", "--pages", "2"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn set_category_missing_required_group() {
+    let tmp_home = tempfile::tempdir().unwrap();
+    cmd_with_fixtures(&tmp_home)
+        .args(["--yes", "transactions", "set-category", "txn_1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+// -- categories edit --dry-run ------------------------------------------------
+
+#[test]
+fn categories_edit_dry_run() {
+    let tmp_home = tempfile::tempdir().unwrap();
+    cmd_with_fixtures(&tmp_home)
+        .args(["--dry-run", "categories", "edit", "cat_1", "--name", "Foo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dry-run: would edit category"));
+}
+
+// -- Help text outputs --------------------------------------------------------
+
+#[test]
+fn help_text_for_transactions() {
+    let tmp_home = tempfile::tempdir().unwrap();
+    cmd_with_fixtures(&tmp_home)
+        .args(["transactions", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("search"))
+        .stdout(predicate::str::contains("show"));
+}
+
+#[test]
+fn help_text_for_categories() {
+    let tmp_home = tempfile::tempdir().unwrap();
+    cmd_with_fixtures(&tmp_home)
+        .args(["categories", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("show"))
+        .stdout(predicate::str::contains("create"));
+}
+
+#[test]
+fn help_text_for_tags() {
+    let tmp_home = tempfile::tempdir().unwrap();
+    cmd_with_fixtures(&tmp_home)
+        .args(["tags", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("create"))
+        .stdout(predicate::str::contains("delete"));
+}
+
+#[test]
+fn help_text_for_recurrings() {
+    let tmp_home = tempfile::tempdir().unwrap();
+    cmd_with_fixtures(&tmp_home)
+        .args(["recurrings", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("show"))
+        .stdout(predicate::str::contains("create"));
+}

@@ -4,6 +4,59 @@ use std::thread;
 
 use copilot_money_cli::client::{ClientMode, CopilotClient};
 
+/// Like `serve_one` but doesn't assert a specific operationName, just returns any body.
+fn serve_one_any(status: u16, body: &'static str) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+
+        let mut buf = Vec::new();
+        let mut header_end = None;
+        while header_end.is_none() {
+            let mut tmp = [0u8; 1024];
+            let n = stream.read(&mut tmp).unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                header_end = Some(i + 4);
+            }
+        }
+
+        let header_end = header_end.expect("did not receive full headers");
+
+        // drain request body
+        let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
+        let lower = headers.to_lowercase();
+        let content_length = lower
+            .lines()
+            .find_map(|l| l.strip_prefix("content-length: "))
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let mut body_buf = buf[header_end..].to_vec();
+        while body_buf.len() < content_length {
+            let mut tmp = vec![0u8; content_length - body_buf.len()];
+            let n = stream.read(&mut tmp).unwrap();
+            if n == 0 {
+                break;
+            }
+            body_buf.extend_from_slice(&tmp[..n]);
+        }
+
+        let resp = format!(
+            "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(resp.as_bytes()).unwrap();
+    });
+
+    format!("http://{}", addr)
+}
+
 fn serve_one(status: u16, body: &'static str, assert_bearer: Option<&'static str>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -225,3 +278,105 @@ fn http_mode_refreshes_token_on_unauthenticated_and_retries_once() {
 
     unsafe { std::env::remove_var("COPILOT_TEST_REFRESH_TOKEN") };
 }
+
+// -- list_transactions success path -------------------------------------------
+
+#[test]
+fn http_mode_list_transactions_success() {
+    let body = r#"{
+        "data": {
+            "transactions": {
+                "edges": [
+                    {"cursor":"c1","node":{"id":"txn_1","date":"2025-12-15","name":"Test","amount":"-50.00","itemId":"item_1","accountId":"acct_1","isReviewed":false}}
+                ],
+                "pageInfo": {"endCursor":"c1","hasNextPage":false,"hasPreviousPage":false,"startCursor":"c1"}
+            }
+        }
+    }"#;
+    // serve_one_any avoids asserting operationName so we can reuse for any query
+    let base_url = serve_one_any(200, Box::leak(body.to_string().into_boxed_str()));
+    let tmp = tempfile::tempdir().unwrap();
+    let client = CopilotClient::new(ClientMode::Http {
+        base_url,
+        token: Some("tok".to_string()),
+        token_file: tmp.path().join("token"),
+        session_dir: None,
+    });
+    let txns = client.list_transactions(50).unwrap();
+    assert_eq!(txns.len(), 1);
+    assert_eq!(txns[0].id.as_str(), "txn_1");
+}
+
+// -- list_categories success path ---------------------------------------------
+
+#[test]
+fn http_mode_list_categories_success() {
+    let body = r#"{
+        "data": {
+            "categories": [
+                {"id":"cat_1","name":"Food"},
+                {"id":"cat_2","name":"Transport"}
+            ]
+        }
+    }"#;
+    let base_url = serve_one_any(200, Box::leak(body.to_string().into_boxed_str()));
+    let tmp = tempfile::tempdir().unwrap();
+    let client = CopilotClient::new(ClientMode::Http {
+        base_url,
+        token: Some("tok".to_string()),
+        token_file: tmp.path().join("token"),
+        session_dir: None,
+    });
+    let cats = client.list_categories(false, false, false).unwrap();
+    assert_eq!(cats.len(), 2);
+    assert_eq!(cats[0].name.as_deref(), Some("Food"));
+    assert_eq!(cats[1].name.as_deref(), Some("Transport"));
+}
+
+// -- list_tags success path ---------------------------------------------------
+
+#[test]
+fn http_mode_list_tags_success() {
+    let body = r#"{
+        "data": {
+            "tags": [
+                {"id":"tag_1","name":"Groceries","colorName":"GREEN1"}
+            ]
+        }
+    }"#;
+    let base_url = serve_one_any(200, Box::leak(body.to_string().into_boxed_str()));
+    let tmp = tempfile::tempdir().unwrap();
+    let client = CopilotClient::new(ClientMode::Http {
+        base_url,
+        token: Some("tok".to_string()),
+        token_file: tmp.path().join("token"),
+        session_dir: None,
+    });
+    let tags = client.list_tags().unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].name.as_deref(), Some("Groceries"));
+}
+
+// -- Double retry exhaustion: both attempts return UNAUTHENTICATED ------------
+
+#[test]
+fn http_mode_double_retry_exhaustion_errors() {
+    let err_body = r#"{"errors":[{"extensions":{"code":"UNAUTHENTICATED"},"message":"User is not authenticated"}]}"#;
+
+    // Both attempts get UNAUTHENTICATED. No session_dir → no refresh possible → should bail on first attempt.
+    let base_url = serve_one_any(401, Box::leak(err_body.to_string().into_boxed_str()));
+    let tmp = tempfile::tempdir().unwrap();
+    let client = CopilotClient::new(ClientMode::Http {
+        base_url,
+        token: Some("bad".to_string()),
+        token_file: tmp.path().join("token"),
+        session_dir: None,
+    });
+    let err = client.try_user_query().unwrap_err().to_string();
+    assert!(err.contains("unauthenticated"));
+}
+
+// NOTE: A "double retry with session_dir both fail" test is omitted because
+// it would require setting COPILOT_TEST_REFRESH_TOKEN, which races with
+// http_mode_refreshes_token_on_unauthenticated_and_retries_once when tests
+// run in parallel.

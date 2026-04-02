@@ -1,0 +1,5 @@
+---
+source: tests/cli_snapshots.rs
+expression: "run(&[\"version\"])"
+---
+copilot-money-cli 0.1.2
