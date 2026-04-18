@@ -1809,7 +1809,7 @@ mod helper_tests {
 
     #[test]
     fn value_to_string_number_float() {
-        assert_eq!(value_to_string(Some(serde_json::json!(3.14))), "3.14");
+        assert_eq!(value_to_string(Some(serde_json::json!(1.5))), "1.5");
     }
 
     #[test]
