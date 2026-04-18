@@ -449,7 +449,9 @@ impl CopilotClient {
                         // If we have partial data alongside the error, return the body
                         // so callers can process what they got (e.g. null-ID transactions).
                         if body.get("data").and_then(|d| d.as_object()).is_some() {
-                            eprintln!("warning: graphql partial error (skipping bad records): {msg}");
+                            eprintln!(
+                                "warning: graphql partial error (skipping bad records): {msg}"
+                            );
                         } else {
                             anyhow::bail!("{msg}");
                         }
