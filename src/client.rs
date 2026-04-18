@@ -71,7 +71,7 @@ impl CopilotClient {
         for edge in edges {
             if let Some(node) = edge.pointer("/node") {
                 // Skip nodes with null id (server-side bug in Copilot API).
-                if node.get("id").map_or(true, |v| v.is_null()) {
+                if node.get("id").is_none_or(|v| v.is_null()) {
                     continue;
                 }
                 match serde_json::from_value::<Transaction>(node.clone()) {
