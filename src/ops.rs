@@ -1,4 +1,8 @@
 pub const USER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/graphql/User.graphql"));
+pub const ACCOUNTS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/graphql/Accounts.graphql"
+));
 pub const TRANSACTIONS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/graphql/Transactions.graphql"
