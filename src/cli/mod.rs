@@ -1634,7 +1634,8 @@ mod helper_tests {
 
     #[test]
     fn value_to_string_number_float() {
-        assert_eq!(value_to_string(Some(serde_json::json!(3.14))), "3.14");
+        // Deliberately not 3.14: clippy's approx_constant lint flags it as PI.
+        assert_eq!(value_to_string(Some(serde_json::json!(2.75))), "2.75");
     }
 
     #[test]
