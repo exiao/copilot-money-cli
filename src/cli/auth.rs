@@ -2,9 +2,10 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 
-use crate::client::CopilotClient;
+use crate::client::{CopilotClient, refresh_token_via_session};
 use crate::config::{
-    ensure_private_dir, load_token, save_token, session_path, token_helper_path, token_path,
+    ensure_private_dir, load_token, save_token, session_path, token_helper_command,
+    token_helper_path, token_path,
 };
 
 use super::render::{KeyValueRow, render_output};
@@ -27,7 +28,9 @@ pub(super) fn run_auth(cli: &Cli, client: &CopilotClient, cmd: AuthCmd) -> anyho
                 value: token.is_some().to_string(),
             });
 
-            let valid = token.as_ref().map(|_| client.try_user_query().is_ok());
+            let valid = token
+                .as_ref()
+                .map(|_| client.try_user_query_without_refresh().is_ok());
             rows.push(KeyValueRow {
                 key: "token_valid".to_string(),
                 value: valid
@@ -46,8 +49,7 @@ pub(super) fn run_auth(cli: &Cli, client: &CopilotClient, cmd: AuthCmd) -> anyho
             let mut token: Option<String> = None;
 
             if let Some(helper) = token_helper_path() {
-                let mut cmd = std::process::Command::new("python3");
-                cmd.arg(helper);
+                let mut cmd = token_helper_command(&helper).into_command();
                 cmd.args(["--timeout-seconds", &args.timeout_seconds.to_string()]);
 
                 if !args.no_persist_session {
@@ -136,27 +138,8 @@ pub(super) fn run_auth(cli: &Cli, client: &CopilotClient, cmd: AuthCmd) -> anyho
             }
             ensure_private_dir(&dir)?;
 
-            let Some(helper) = token_helper_path() else {
-                anyhow::bail!(
-                    "token refresh helper not found (install python3 + playwright, or re-run `copilot auth set-token`)"
-                );
-            };
-
-            let out = std::process::Command::new("python3")
-                .arg(helper)
-                .args(["--mode", "session"])
-                .args(["--user-data-dir", dir.to_string_lossy().as_ref()])
-                .args(["--timeout-seconds", &args.timeout_seconds.to_string()])
-                .output()
-                .context("failed to run token helper")?;
-
-            if !out.status.success() {
-                anyhow::bail!("token helper failed");
-            }
-            let token = String::from_utf8(out.stdout)?.trim().to_string();
-            if token.is_empty() {
-                anyhow::bail!("token helper returned empty token");
-            }
+            let token = refresh_token_via_session(&dir, args.timeout_seconds)
+                .context("failed to refresh token via browser helper")?;
 
             let p = cli.token_file.clone().unwrap_or_else(token_path);
             save_token(&p, &token)?;

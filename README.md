@@ -33,6 +33,16 @@ This demo runs the CLI against the repo’s fixture data (no network calls):
 - `copilot auth login` tries to use an optional browser helper (Python + Playwright); otherwise it falls back to manual token paste.
 - SSH-friendly: `copilot auth login --mode email-link --email you@example.com` (or just paste a bearer token manually).
 
+### Auth troubleshooting
+
+- Use the actual Copilot account email for `--mode email-link`. If the inbox that receives the login email is a forwarding destination or alias, the magic link may arrive there, but the requested identity still has to match the Copilot account itself.
+- `copilot auth refresh` only works when the persisted Playwright session under `~/.config/copilot-money-cli/playwright-session` is still logged in. If refresh fails with `failed to capture token using persisted session`, do a fresh `copilot auth login --persist-session`.
+- The current Copilot email-login form includes a hidden `confirmEmail` anti-bot field. Any automation should fill only the visible email input; touching the hidden field can turn a valid login request into a generic “Something went wrong” failure.
+- After any auth repair, verify real API reads instead of trusting the token write alone:
+  - `copilot auth status --output json`
+  - `copilot categories list --output json`
+  - `copilot transactions list --limit 3 --output json`
+
 ## Command reference
 
 By default, commands are **read-only**. Any write action either:
@@ -56,6 +66,8 @@ By default, commands are **read-only**. Any write action either:
   - `--mode email-link`: SSH-friendly; you paste the sign-in link back (hidden input).
   - `--mode credentials`: uses `--secrets-file` (not recommended).
   - `--persist-session`: stores a Playwright browser session under `~/.config/copilot-money-cli/playwright-session` so tokens can be refreshed without re-auth.
+- Normal read commands now auto-refresh from the persisted session when the saved bearer token is stale. If session capture fails, the command fails fast and tells you to run `copilot auth refresh` or `copilot auth login` explicitly; it does not request magic-link emails on its own.
+- `copilot auth status` stays passive on purpose: it reports whether the current token works, but does not trigger refresh or send login emails.
 - `copilot auth refresh` — refresh token from the persisted browser session.
 - `copilot auth logout` — remove local token.
 
@@ -73,6 +85,7 @@ By default, commands are **read-only**. Any write action either:
 - `copilot transactions set-category <id...> --category-id <ID>` — set category by id.
 - `copilot transactions set-category <id...> --category <NAME>` — set category by name (exact match).
 - `copilot transactions assign-recurring <id...> --recurring-id <ID>` — attach to an existing recurring.
+- `copilot transactions clear-recurring <id...>` — detach from recurring definitions.
 - `copilot transactions set-notes <id...> --notes <TEXT>` — set notes.
 - `copilot transactions set-notes <id...> --clear` — clear notes.
 - `copilot transactions set-tags <id...> [--mode set|add|remove] [--tag-id <TAG_ID> ...]` — update tags.
@@ -84,6 +97,11 @@ By default, commands are **read-only**. Any write action either:
   - Options: `--children`, `--name-contains`, `--spend`, `--budget`, `--rollovers`
 - `copilot categories show <id>` — show one category.
 - `copilot categories create <name> [--emoji <EMOJI>] [--color-name <COLOR>] [--excluded] [--template-id <ID>] [--budget-unassigned-amount <AMOUNT>]` — create a category.
+
+### Accounts
+
+- `copilot accounts list` — list accounts enriched with institution metadata.
+- `copilot accounts show <id>` — show one account with institution name, color, and logo URLs.
 
 ### Recurring
 

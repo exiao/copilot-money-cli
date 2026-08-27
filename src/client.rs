@@ -38,6 +38,12 @@ impl CopilotClient {
         Ok(())
     }
 
+    /// Validates the configured token without attempting persisted-session refresh.
+    pub fn try_user_query_without_refresh(&self) -> anyhow::Result<()> {
+        let _ = self.graphql_with_session_refresh("User", ops::USER, json!({}), false)?;
+        Ok(())
+    }
+
     pub fn list_transactions(&self, limit: usize) -> anyhow::Result<Vec<Transaction>> {
         Ok(self
             .list_transactions_page(limit, None, None, None)?
@@ -195,12 +201,20 @@ impl CopilotClient {
         ids: Vec<TransactionIdRef>,
         is_reviewed: bool,
     ) -> anyhow::Result<BulkEditTransactionsResult> {
+        self.bulk_edit_transactions(ids, json!({ "isReviewed": is_reviewed }))
+    }
+
+    pub fn bulk_edit_transactions(
+        &self,
+        ids: Vec<TransactionIdRef>,
+        input: Value,
+    ) -> anyhow::Result<BulkEditTransactionsResult> {
         let data = self.graphql(
             "BulkEditTransactions",
             ops::BULK_EDIT_TRANSACTIONS,
             json!({
                 "filter": { "ids": ids },
-                "input": { "isReviewed": is_reviewed }
+                "input": input
             }),
         )?;
 
@@ -286,6 +300,36 @@ impl CopilotClient {
             .cloned()
             .ok_or_else(|| {
                 anyhow::anyhow!("unexpected AddTransactionToRecurring response shape")
+            })?;
+        Ok(serde_json::from_value(txn)?)
+    }
+
+    pub fn exclude_transaction_from_recurring(
+        &self,
+        item_id: &ItemId,
+        account_id: &AccountId,
+        id: &TransactionId,
+        recurring_id: &RecurringId,
+    ) -> anyhow::Result<Transaction> {
+        let data = self.graphql(
+            "ExcludeTransactionFromRecurring",
+            ops::EXCLUDE_TRANSACTION_FROM_RECURRING,
+            json!({
+                "itemId": item_id.as_str(),
+                "accountId": account_id.as_str(),
+                "id": id.as_str(),
+                "input": {
+                    "recurringId": recurring_id.as_str(),
+                    "isExcluded": true
+                }
+            }),
+        )?;
+
+        let txn = data
+            .pointer("/data/addTransactionToRecurring/transaction")
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!("unexpected ExcludeTransactionFromRecurring response shape")
             })?;
         Ok(serde_json::from_value(txn)?)
     }
@@ -400,6 +444,16 @@ impl CopilotClient {
         query: &str,
         variables: Value,
     ) -> anyhow::Result<Value> {
+        self.graphql_with_session_refresh(operation_name, query, variables, true)
+    }
+
+    fn graphql_with_session_refresh(
+        &self,
+        operation_name: &str,
+        query: &str,
+        variables: Value,
+        allow_session_refresh: bool,
+    ) -> anyhow::Result<Value> {
         match &self.mode {
             ClientMode::Fixtures(dir) => {
                 let path = dir.join(format!("{operation_name}.json"));
@@ -432,10 +486,12 @@ impl CopilotClient {
                     let body: Value = resp.json()?;
 
                     if is_unauthenticated(&body) {
-                        if attempt == 1
+                        if allow_session_refresh
+                            && attempt == 1
                             && let Some(dir) = session_dir.as_ref().filter(|d| d.exists())
                         {
-                            let refreshed = refresh_token_via_session(dir, 180)?;
+                            let refreshed =
+                                refresh_token_via_session(dir, refresh_timeout_seconds())?;
                             save_token(token_file, &refreshed)?;
                             current_token = Some(refreshed);
                             continue;
@@ -519,7 +575,17 @@ fn format_graphql_error(body: &Value) -> Option<String> {
     Some(out)
 }
 
-fn refresh_token_via_session(session_dir: &Path, timeout_seconds: u64) -> anyhow::Result<String> {
+fn refresh_timeout_seconds() -> u64 {
+    std::env::var("COPILOT_SESSION_REFRESH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(20)
+}
+
+pub(crate) fn refresh_token_via_session(
+    session_dir: &Path,
+    timeout_seconds: u64,
+) -> anyhow::Result<String> {
     // Test hook: allow deterministic refresh without running the browser helper.
     // (Used by unit tests that simulate an expired token + refresh + retry.)
     if let Ok(t) = std::env::var("COPILOT_TEST_REFRESH_TOKEN")
@@ -533,21 +599,34 @@ fn refresh_token_via_session(session_dir: &Path, timeout_seconds: u64) -> anyhow
             "token refresh helper not found (install python3 + playwright, or re-run `copilot auth set-token`)"
         );
     };
-    let out = std::process::Command::new("python3")
-        .arg(helper)
+    let out = crate::config::token_helper_command(&helper)
+        .into_command()
         .args(["--mode", "session"])
         .args(["--user-data-dir", session_dir.to_string_lossy().as_ref()])
         .args(["--timeout-seconds", &timeout_seconds.to_string()])
         .output()?;
+    if out.status.success() {
+        let token = String::from_utf8(out.stdout)?.trim().to_string();
+        if !token.is_empty() {
+            return Ok(token);
+        }
+        anyhow::bail!(
+            "session token helper returned empty token; run `copilot auth refresh` or `copilot auth login` explicitly"
+        );
+    }
 
-    if !out.status.success() {
-        anyhow::bail!("token refresh helper failed");
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if stderr.is_empty() {
+        anyhow::bail!(
+            "session token helper failed; run `copilot auth refresh` or `copilot auth login` explicitly"
+        );
     }
-    let token = String::from_utf8(out.stdout)?.trim().to_string();
-    if token.is_empty() {
-        anyhow::bail!("token refresh helper returned empty token");
-    }
-    Ok(token)
+
+    anyhow::bail!(
+        "session token helper failed: {stderr}
+
+Run `copilot auth refresh` or `copilot auth login` explicitly."
+    );
 }
 
 #[derive(Debug, Deserialize, Serialize)]

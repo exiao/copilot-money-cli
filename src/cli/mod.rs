@@ -196,6 +196,7 @@ pub enum TransactionsCmd {
     Unreview(TransactionsReviewArgs),
     SetCategory(TransactionsSetCategoryArgs),
     AssignRecurring(TransactionsAssignRecurringArgs),
+    ClearRecurring(TransactionsClearRecurringArgs),
     SetNotes(TransactionsSetNotesArgs),
     SetTags(TransactionsSetTagsArgs),
     Edit(TransactionsEditArgs),
@@ -443,6 +444,11 @@ pub struct TransactionsAssignRecurringArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct TransactionsClearRecurringArgs {
+    pub ids: Vec<TransactionId>,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct TransactionsSetNotesArgs {
     pub ids: Vec<TransactionId>,
 
@@ -611,6 +617,26 @@ pub struct RecurringsCreateArgs {
 #[derive(Debug, Clone, Args)]
 pub struct RecurringsEditArgs {
     pub id: RecurringId,
+
+    /// Update the recurring name.
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Set the category by name (exact match, case-insensitive).
+    #[arg(long)]
+    pub category: Option<String>,
+
+    /// Set the category by id.
+    #[arg(long)]
+    pub category_id: Option<CategoryId>,
+
+    /// Clear any category assignment.
+    #[arg(long, default_value_t = false)]
+    pub clear_category: bool,
+
+    /// Set the recurring emoji (best-effort; Copilot may ignore invalid values).
+    #[arg(long)]
+    pub emoji: Option<String>,
 
     #[arg(long)]
     pub name_contains: Option<String>,
@@ -1137,6 +1163,54 @@ fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> 
                 )?;
                 updated.push(t);
             }
+            render_transactions_updated(cli, updated)
+        }
+        TransactionsCmd::ClearRecurring(args) => {
+            if cli.dry_run {
+                println!("dry-run: would clear recurring for {:?}", args.ids);
+                return Ok(());
+            }
+            confirm_write(cli, &format!("Clear recurring for {:?}", args.ids))?;
+            let txns = resolve_transactions_by_ids(client, &args.ids)?;
+            let mut updated = Vec::new();
+            let mut ok = 0usize;
+            let mut skipped = 0usize;
+            let mut failed = 0usize;
+            let mut first_err: Option<String> = None;
+
+            for txn in txns {
+                let (item_id, account_id) = require_item_and_account(&txn)?;
+                let Some(rid) = txn.recurring_id.as_ref() else {
+                    skipped += 1;
+                    continue;
+                };
+                let res =
+                    client.exclude_transaction_from_recurring(&item_id, &account_id, &txn.id, rid);
+                match res {
+                    Ok(t) => {
+                        ok += 1;
+                        updated.push(t);
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        if first_err.is_none() {
+                            first_err = Some(e.to_string());
+                        }
+                    }
+                }
+            }
+
+            let mut msg = format!("Cleared recurring for {ok} (skipped {skipped})");
+            if failed > 0 {
+                msg = format!("{msg} ({failed} failed)");
+                if let Some(e) = first_err {
+                    msg = format!("{msg}: {e}");
+                }
+            }
+            if failed > 0 {
+                anyhow::bail!("{msg}");
+            }
+            // Display the updated transactions (may be empty if everything was already clear).
             render_transactions_updated(cli, updated)
         }
         TransactionsCmd::SetNotes(args) => {

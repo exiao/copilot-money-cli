@@ -163,6 +163,11 @@ fn transactions_assign_recurring_table_snapshot() {
 }
 
 #[test]
+fn transactions_clear_recurring_table_snapshot() {
+    insta::assert_snapshot!(run(&["--yes", "transactions", "clear-recurring", "txn_1"]));
+}
+
+#[test]
 fn transactions_edit_type_table_snapshot() {
     insta::assert_snapshot!(run(&[
         "--yes",
