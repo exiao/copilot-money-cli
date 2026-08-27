@@ -151,3 +151,141 @@ impl fmt::Display for RecurringFrequency {
         write!(f, "{s}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    // -- OwnedId trait tests --------------------------------------------------
+
+    #[test]
+    fn owned_id_clone() {
+        let id: TransactionId = OwnedId::new("abc".to_string());
+        let cloned = id.clone();
+        assert_eq!(id, cloned);
+        assert_eq!(cloned.as_str(), "abc");
+    }
+
+    #[test]
+    fn owned_id_debug() {
+        let id: TransactionId = OwnedId::new("xyz".to_string());
+        let dbg = format!("{:?}", id);
+        assert!(dbg.contains("Id"));
+        assert!(dbg.contains("xyz"));
+    }
+
+    #[test]
+    fn owned_id_display() {
+        let id: CategoryId = OwnedId::new("cat_42".to_string());
+        assert_eq!(format!("{id}"), "cat_42");
+    }
+
+    #[test]
+    fn owned_id_eq_and_ne() {
+        let a: TagId = OwnedId::new("t1".to_string());
+        let b: TagId = OwnedId::new("t1".to_string());
+        let c: TagId = OwnedId::new("t2".to_string());
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn owned_id_hash() {
+        let a: TransactionId = OwnedId::new("h1".to_string());
+        let b: TransactionId = OwnedId::new("h1".to_string());
+        let mut set = HashSet::new();
+        set.insert(a);
+        set.insert(b);
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn owned_id_from_str() {
+        let id: RecurringId = "rec_1".parse().unwrap();
+        assert_eq!(id.as_str(), "rec_1");
+    }
+
+    #[test]
+    fn owned_id_from_string() {
+        let id: AccountId = AccountId::from("acct_1".to_string());
+        assert_eq!(id.as_str(), "acct_1");
+    }
+
+    #[test]
+    fn owned_id_from_str_ref() {
+        let id: ItemId = ItemId::from("item_1");
+        assert_eq!(id.as_str(), "item_1");
+    }
+
+    #[test]
+    fn owned_id_serde_roundtrip() {
+        let id: TransactionId = OwnedId::new("txn_abc".to_string());
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, "\"txn_abc\"");
+        let back: TransactionId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    // -- TransactionType tests ------------------------------------------------
+
+    #[test]
+    fn transaction_type_display() {
+        assert_eq!(TransactionType::Regular.to_string(), "REGULAR");
+        assert_eq!(
+            TransactionType::InternalTransfer.to_string(),
+            "INTERNAL_TRANSFER"
+        );
+        assert_eq!(TransactionType::Other.to_string(), "OTHER");
+    }
+
+    #[test]
+    fn transaction_type_serde_roundtrip() {
+        for variant in [TransactionType::Regular, TransactionType::InternalTransfer] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: TransactionType = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn transaction_type_other_catch_all() {
+        let back: TransactionType = serde_json::from_str("\"SOMETHING_NEW\"").unwrap();
+        assert_eq!(back, TransactionType::Other);
+    }
+
+    // -- RecurringFrequency tests ---------------------------------------------
+
+    #[test]
+    fn recurring_frequency_display() {
+        assert_eq!(RecurringFrequency::Daily.to_string(), "DAILY");
+        assert_eq!(RecurringFrequency::Weekly.to_string(), "WEEKLY");
+        assert_eq!(RecurringFrequency::Biweekly.to_string(), "BIWEEKLY");
+        assert_eq!(RecurringFrequency::Monthly.to_string(), "MONTHLY");
+        assert_eq!(RecurringFrequency::Quarterly.to_string(), "QUARTERLY");
+        assert_eq!(RecurringFrequency::Annually.to_string(), "ANNUALLY");
+        assert_eq!(RecurringFrequency::Other.to_string(), "OTHER");
+    }
+
+    #[test]
+    fn recurring_frequency_serde_roundtrip() {
+        for variant in [
+            RecurringFrequency::Daily,
+            RecurringFrequency::Weekly,
+            RecurringFrequency::Biweekly,
+            RecurringFrequency::Monthly,
+            RecurringFrequency::Quarterly,
+            RecurringFrequency::Annually,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: RecurringFrequency = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn recurring_frequency_other_catch_all() {
+        let back: RecurringFrequency = serde_json::from_str("\"SEMI_ANNUAL\"").unwrap();
+        assert_eq!(back, RecurringFrequency::Other);
+    }
+}

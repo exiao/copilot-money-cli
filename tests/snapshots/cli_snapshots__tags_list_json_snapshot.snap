@@ -1,0 +1,16 @@
+---
+source: tests/cli_snapshots.rs
+expression: "run(&[\"--output\", \"json\", \"tags\", \"list\"])"
+---
+[
+  {
+    "id": "tag_shopping",
+    "name": "Shopping",
+    "color_name": "BLUE1"
+  },
+  {
+    "id": "tag_transfer",
+    "name": "Transfer",
+    "color_name": "GRAY1"
+  }
+]

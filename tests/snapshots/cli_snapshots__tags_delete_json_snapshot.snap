@@ -1,0 +1,10 @@
+---
+source: tests/cli_snapshots.rs
+expression: "run(&[\"--yes\", \"--output\", \"json\", \"tags\", \"delete\", \"tag_1\"])"
+---
+[
+  {
+    "key": "deleted",
+    "value": "true"
+  }
+]
