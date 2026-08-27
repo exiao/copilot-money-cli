@@ -99,7 +99,7 @@ class GetTokenTests(unittest.TestCase):
         self.assertEqual(profile_dir, "/tmp/copilot-profile")
         self.assertIsNone(temp_profile)
 
-    def test_launch_browser_context_clears_stale_singleton_locks_before_quarantine(self) -> None:
+    def test_launch_browser_context_preserves_profile_when_singleton_is_in_use(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = Path(tmp) / "playwright-session"
             default_dir = profile / "Default"
@@ -118,29 +118,27 @@ class GetTokenTests(unittest.TestCase):
 
                 def launch_persistent_context(self, dir_value, **kwargs):
                     self.calls += 1
-                    if self.calls == 1:
-                        raise Exception(
-                            "BrowserType.launch_persistent_context: Failed to create a ProcessSingleton for your profile directory. This usually means that the profile is already in use by another instance of Chromium."
-                        )
-                    return {"dir": dir_value}
+                    raise Exception(
+                        "BrowserType.launch_persistent_context: Failed to create a ProcessSingleton for your profile directory. This usually means that the profile is already in use by another instance of Chromium."
+                    )
 
             class _Playwright:
                 def __init__(self):
                     self.chromium = _Chromium()
 
             playwright = _Playwright()
-            context = get_token.launch_browser_context(
-                playwright,
-                user_data_dir=str(profile),
-                headful=False,
-            )
+            with self.assertRaisesRegex(Exception, "ProcessSingleton"):
+                get_token.launch_browser_context(
+                    playwright,
+                    user_data_dir=str(profile),
+                    headful=False,
+                )
 
-            self.assertEqual(context, {"dir": str(profile)})
-            self.assertEqual(playwright.chromium.calls, 2)
-            self.assertFalse((profile / "SingletonCookie").exists())
-            self.assertFalse((profile / "SingletonLock").exists())
-            self.assertFalse((profile / "SingletonSocket").exists())
-            self.assertFalse((default_dir / "LOCK").exists())
+            self.assertEqual(playwright.chromium.calls, 1)
+            self.assertTrue((profile / "SingletonCookie").is_symlink())
+            self.assertTrue((profile / "SingletonLock").is_symlink())
+            self.assertTrue((profile / "SingletonSocket").is_symlink())
+            self.assertTrue((default_dir / "LOCK").exists())
             self.assertEqual(list(profile.parent.glob(f"{profile.name}.broken-*")), [])
 
     def test_launch_browser_context_does_not_quarantine_profile_on_non_singleton_error(self) -> None:

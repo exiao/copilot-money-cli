@@ -117,28 +117,6 @@ def token_is_fresh(token: str, *, grace_seconds: int = 60) -> bool:
     return float(exp) > (time.time() + float(grace_seconds))
 
 
-def _cleanup_stale_singleton_artifacts(session_dir: Path) -> bool:
-    removed_any = False
-    for name in ("SingletonCookie", "SingletonLock", "SingletonSocket"):
-        path = session_dir / name
-        try:
-            if path.is_symlink() or path.exists():
-                path.unlink()
-                removed_any = True
-                trace(f"removed stale Chromium singleton artifact {path}")
-        except FileNotFoundError:
-            continue
-    default_lock = session_dir / "Default" / "LOCK"
-    try:
-        if default_lock.exists():
-            default_lock.unlink()
-            removed_any = True
-            trace(f"removed stale Chromium lock file {default_lock}")
-    except FileNotFoundError:
-        pass
-    return removed_any
-
-
 def preferred_browser_channel() -> str | None:
     explicit = os.environ.get("COPILOT_PLAYWRIGHT_CHANNEL", "").strip()
     if explicit:
@@ -186,18 +164,9 @@ def launch_browser_context(playwright, *, user_data_dir: str | None, headful: bo
     try:
         return launch(user_data_dir)
     except Exception as exc:
-        if not user_data_dir:
-            raise
-        session_dir = Path(user_data_dir)
-        if not session_dir.exists():
-            raise
         message = str(exc)
-        if ("ProcessSingleton" in message or "profile is already in use" in message) and _cleanup_stale_singleton_artifacts(session_dir):
-            trace("retrying persistent browser session after removing stale singleton artifacts")
-            return launch(str(session_dir))
-        trace(
-            f"persistent session launch failed without a recoverable singleton error; preserving {session_dir}"
-        )
+        if user_data_dir and ("ProcessSingleton" in message or "profile is already in use" in message):
+            trace(f"persistent session is already in use; preserving {user_data_dir}")
         raise
 
 
@@ -339,7 +308,7 @@ def main() -> int:
     args = parser.parse_args()
 
     mode = str(args.mode)
-    if mode in {"email-link", "credentials", "session"}:
+    if mode == "email-link":
         _reexec_into_integrations_venv_if_needed()
     interactive = mode == "interactive"
     email_link = mode == "email-link"
@@ -577,7 +546,7 @@ def main() -> int:
             try:
                 trace("waiting for magic link email")
                 link = wait_for_magic_link(timeout_seconds=args.timeout_seconds, email=email)
-            except Exception:
+            except (Exception, SystemExit):
                 link = None
             if not link:
                 link = getpass.getpass(
@@ -585,7 +554,7 @@ def main() -> int:
                 ).strip()
                 if not link.startswith("http"):
                     print("invalid link", file=sys.stderr)
-                    browser.close()
+                    page.context.close()
                     return 2
             trace("opening magic link")
             page.goto(link, wait_until="domcontentloaded", timeout=60_000)
@@ -632,7 +601,7 @@ def main() -> int:
 
         page.context.close()
 
-    token = captured or token
+    token = captured
     if not token:
         if temp_profile is not None:
             temp_profile.cleanup()

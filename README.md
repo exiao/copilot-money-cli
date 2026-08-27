@@ -85,6 +85,7 @@ By default, commands are **read-only**. Any write action either:
 - `copilot transactions set-category <id...> --category-id <ID>` — set category by id.
 - `copilot transactions set-category <id...> --category <NAME>` — set category by name (exact match).
 - `copilot transactions assign-recurring <id...> --recurring-id <ID>` — attach to an existing recurring.
+- `copilot transactions clear-recurring <id...>` — detach from recurring definitions.
 - `copilot transactions set-notes <id...> --notes <TEXT>` — set notes.
 - `copilot transactions set-notes <id...> --clear` — clear notes.
 - `copilot transactions set-tags <id...> [--mode set|add|remove] [--tag-id <TAG_ID> ...]` — update tags.
